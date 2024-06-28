@@ -100,10 +100,48 @@ def initialize_GMMs(img, mask, n_components=5):
     return bgGMM, fgGMM
 
 
+def update_gmm_of_pixels(pixels, gmm_list):
+
+    # implement running the likelihood of a each gmm on each pixel
+    # save the index of the one with the maximum likelihood
+    n_components = len(gmm_list)
+    means = np.array([gmm.mean for gmm in gmm_list])
+    covariance_inverses = np.array([gmm.covariance_inverse for gmm in gmm_list])
+    weights = np.array([gmm.component_weight for gmm in gmm_list])
+
+    gmm_model = GaussianMixture(n_components=n_components, covariance_type="full")
+    gmm_model.weights_ = weights
+    gmm_model.means_ = means
+    gmm_model.precisions_cholesky_ = covariance_inverses
+
+    pixel_likelihoods = gmm_model._estimate_weighted_log_prob(pixels)
+    pixels_max_log_likelihood_indices = np.argmax(pixel_likelihoods, axis=1)
+
+    # labels, counts = np.unique(pixels_max_log_likelihood_indices, return_counts=True)
+
+    # somehow update the gmms based on the result
+    updated_gmm_list = []
+    for i in range(len(gmm_list)):
+        current_cluster_pixels = pixels[pixels_max_log_likelihood_indices == i]
+        if len(current_cluster_pixels) == 0:
+            continue
+        current_cluster_mean = np.empty((current_cluster_pixels.shape[1],))
+        covariance_matrix, current_cluster_mean = cv2.calcCovarMatrix(current_cluster_pixels.T, current_cluster_mean,
+                                                                      flags=cv2.COVAR_NORMAL | cv2.COVAR_COLS)
+        covariance_matrix = covariance_matrix / current_cluster_pixels.shape[0]
+        current_component_weight = current_cluster_pixels.shape[0] / pixels.shape[0]
+        current_gmm = GMM(current_cluster_mean, np.linalg.inv(covariance_matrix), np.linalg.det(covariance_matrix),
+                          current_component_weight)
+        updated_gmm_list.append(current_gmm)
+
+    return updated_gmm_list
+
+
 # Define helper functions for the GrabCut algorithm
 def update_GMMs(img, mask, bgGMM, fgGMM):
-    # TODO: implement GMM component assignment step
-    return bgGMM, fgGMM
+    new_bgGMM = update_gmm_of_pixels(img[mask == GC_BGD], bgGMM)
+    new_fgGMM = update_gmm_of_pixels(img[mask == GC_PR_FGD], fgGMM)
+    return new_bgGMM, new_fgGMM
 
 
 def calculate_mincut(img, mask, bgGMM, fgGMM):

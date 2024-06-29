@@ -163,14 +163,19 @@ def check_convergence(energy):
 
 
 def cal_metric(predicted_mask, gt_mask):
-    # TODO: implement metric calculation
+    correct_pixels_amount = np.count_nonzero(predicted_mask == gt_mask)
+    accuracy = correct_pixels_amount / predicted_mask.size
 
-    return 100, 100
+    intersection = np.logical_and(predicted_mask, gt_mask)
+    union = np.logical_or(predicted_mask, gt_mask)
+    jaccard_similarity = np.sum(intersection) / np.sum(union)
+    return accuracy,jaccard_similarity
+    # return 100, 100
 
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='llama', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')

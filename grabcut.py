@@ -169,7 +169,7 @@ def cal_metric(predicted_mask, gt_mask):
     intersection = np.logical_and(predicted_mask, gt_mask)
     union = np.logical_or(predicted_mask, gt_mask)
     jaccard_similarity = np.sum(intersection) / np.sum(union)
-    return accuracy,jaccard_similarity
+    return accuracy, jaccard_similarity
     # return 100, 100
 
 

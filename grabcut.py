@@ -5,6 +5,7 @@ import argparse
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 from gmm import GMM
+import igraph
 
 
 GC_BGD = 0  # Hard bg pixel (has to be in the background in the end)
@@ -35,6 +36,7 @@ def grabcut(img, rect, n_iter=5):
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
     num_iters = 1000
+
     for i in range(num_iters):
         # Update GMM
         bgGMM, fgGMM = update_GMMs(img, mask, bgGMM, fgGMM)
@@ -87,23 +89,7 @@ def initialize_gmm_of_mask_value(init_img, init_mask, mask_value, n_components):
     return gmm_list
 
 
-def initialize_GMMs(img, mask, n_components=5):
-    # need to store 4 things for each gaussian model:
-    # µ – the mean (an RGB triple)
-    # Σ^(−1) – the inverse of the covariance matrix (a 3x3 matrix)
-    # detΣ – the determinant of the covariance matrix (a real)
-    # π – a component weight (a real)
-
-    bgGMM = initialize_gmm_of_mask_value(img, mask, GC_BGD, n_components)
-    fgGMM = initialize_gmm_of_mask_value(img, mask, GC_PR_FGD, n_components)
-
-    return bgGMM, fgGMM
-
-
-def update_gmm_of_pixels(pixels, gmm_list):
-
-    # implement running the likelihood of a each gmm on each pixel
-    # save the index of the one with the maximum likelihood
+def convert_custom_gmm_to_library_gmm(gmm_list):
     n_components = len(gmm_list)
     means = np.array([gmm.mean for gmm in gmm_list])
     covariance_inverses = np.array([gmm.covariance_inverse for gmm in gmm_list])
@@ -113,15 +99,37 @@ def update_gmm_of_pixels(pixels, gmm_list):
     gmm_model.weights_ = weights
     gmm_model.means_ = means
     gmm_model.precisions_cholesky_ = covariance_inverses
+    return gmm_model
+
+
+def initialize_GMMs(img, mask, n_components=5):
+    # need to store 4 things for each gaussian model:
+    # µ – the mean (an RGB triple)
+    # Σ^(−1) – the inverse of the covariance matrix (a 3x3 matrix)
+    # detΣ – the determinant of the covariance matrix (a real)
+    # π – a component weight (a real)
+
+    bg_gmm_list = initialize_gmm_of_mask_value(img, mask, GC_BGD, n_components)
+    bgGMM = convert_custom_gmm_to_library_gmm(bg_gmm_list)
+
+    fg_gmm_list = initialize_gmm_of_mask_value(img, mask, GC_PR_FGD, n_components)
+    fgGMM = convert_custom_gmm_to_library_gmm(fg_gmm_list)
+
+    return bgGMM, fgGMM
+
+
+def update_gmm_of_pixels(pixels, gmm_model):
+    # implement running the likelihood of a each gmm on each pixel
+    # save the index of the one with the maximum likelihood
 
     pixel_likelihoods = gmm_model._estimate_weighted_log_prob(pixels)
     pixels_max_log_likelihood_indices = np.argmax(pixel_likelihoods, axis=1)
 
-    # labels, counts = np.unique(pixels_max_log_likelihood_indices, return_counts=True)
+    labels, counts = np.unique(pixels_max_log_likelihood_indices, return_counts=True)
 
     # somehow update the gmms based on the result
     updated_gmm_list = []
-    for i in range(len(gmm_list)):
+    for i in range(gmm_model.n_components):
         current_cluster_pixels = pixels[pixels_max_log_likelihood_indices == i]
         if len(current_cluster_pixels) == 0:
             continue
@@ -139,8 +147,12 @@ def update_gmm_of_pixels(pixels, gmm_list):
 
 # Define helper functions for the GrabCut algorithm
 def update_GMMs(img, mask, bgGMM, fgGMM):
-    new_bgGMM = update_gmm_of_pixels(img[mask == GC_BGD], bgGMM)
-    new_fgGMM = update_gmm_of_pixels(img[mask == GC_PR_FGD], fgGMM)
+    new_bg_gmm_list = update_gmm_of_pixels(img[mask == GC_BGD], bgGMM)
+    new_bgGMM = convert_custom_gmm_to_library_gmm(new_bg_gmm_list)
+
+    new_fg_gmm_list = update_gmm_of_pixels(img[mask == GC_PR_FGD], fgGMM)
+    new_fgGMM = convert_custom_gmm_to_library_gmm(new_fg_gmm_list)
+
     return new_bgGMM, new_fgGMM
 
 
@@ -148,6 +160,7 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
     # TODO: implement energy (cost) calculation step and mincut
     min_cut = [[], []]
     energy = 0
+
     return min_cut, energy
 
 

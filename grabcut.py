@@ -127,9 +127,42 @@ def initialize_GMMs(img, mask, n_components=5):
 
 
 # Define helper functions for the GrabCut algorithm
+def update_gmm_of_pixels(pixels, gmm_model):
+    # implement running the likelihood of a each gmm on each pixel
+    # save the index of the one with the maximum likelihood
+
+    pixel_likelihoods = gmm_model._estimate_weighted_log_prob(pixels)
+    pixels_max_log_likelihood_indices = np.argmax(pixel_likelihoods, axis=1)
+
+    labels, counts = np.unique(pixels_max_log_likelihood_indices, return_counts=True)
+
+    # somehow update the gmms based on the result
+    updated_gmm_list = []
+    for i in range(gmm_model.n_components):
+        current_cluster_pixels = pixels[pixels_max_log_likelihood_indices == i]
+        if len(current_cluster_pixels) == 0:
+            continue
+        current_cluster_mean = np.empty((current_cluster_pixels.shape[1],))
+        covariance_matrix, current_cluster_mean = cv2.calcCovarMatrix(current_cluster_pixels.T, current_cluster_mean,
+                                                                      flags=cv2.COVAR_NORMAL | cv2.COVAR_COLS)
+        covariance_matrix = covariance_matrix / current_cluster_pixels.shape[0]
+        current_component_weight = current_cluster_pixels.shape[0] / pixels.shape[0]
+        current_gmm = GMM(current_cluster_mean, np.linalg.inv(covariance_matrix), np.linalg.det(covariance_matrix),
+                          current_component_weight)
+        updated_gmm_list.append(current_gmm)
+
+    return updated_gmm_list
+
+
+# Define helper functions for the GrabCut algorithm
 def update_GMMs(img, mask, bgGMM, fgGMM):
-    # TODO: implement GMM component assignment step
-    return bgGMM, fgGMM
+    new_bg_gmm_list = update_gmm_of_pixels(img[mask == GC_BGD], bgGMM)
+    new_bgGMM = convert_custom_gmm_to_library_gmm(new_bg_gmm_list)
+
+    new_fg_gmm_list = update_gmm_of_pixels(img[mask == GC_PR_FGD], fgGMM)
+    new_fgGMM = convert_custom_gmm_to_library_gmm(new_fg_gmm_list)
+
+    return new_bgGMM, new_fgGMM
 
 
 # Translation from each vertex index to pixel location in img (x,y) for identification

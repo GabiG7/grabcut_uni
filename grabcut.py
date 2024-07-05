@@ -89,10 +89,10 @@ def compute_n_link(image, x, y, n_x, n_y, beta):
 
 def create_N_links(image, beta):
     # get image dimensions
-    num_of_rows = img.shape[0]
-    num_of_cols = img.shape[1]
+    num_of_rows = image.shape[0]
+    num_of_cols = image.shape[1]
 
-    weights_matrix = np.zeros(img.shape[:2], dtype=np.uint32)
+    weights_matrix = np.zeros(image.shape[:2], dtype=np.uint32)
 
     # N-Links loop
     for x in range(num_of_rows):
@@ -310,7 +310,6 @@ def update_GMMs(img, mask, bgGMM, fgGMM):
 
 
 def calculate_mincut(img, mask, bgGMM, fgGMM):
-    # TODO: implement energy (cost) calculation step and mincut
     num_of_rows = img.shape[0]
     num_of_cols = img.shape[1]
     num_pixels = num_of_rows * num_of_cols

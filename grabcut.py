@@ -74,7 +74,7 @@ def compute_n_link(image, x, y, n_x, n_y, beta):
     # n_x, n_y = vid_to_img_coordinates(single_row_size, x)
     # m_x, m_y = vid_to_img_coordinates(single_row_size, y)
 
-    print(f"({x}, {y}), ({n_x}, {n_y})")
+    # print(f"({x}, {y}), ({n_x}, {n_y})")
 
     # Pixels euclidean distance
     euclidean_dist = np.linalg.norm((x - n_x, y - n_y))
@@ -150,7 +150,8 @@ def grabcut(img, rect, n_iter=5):
     create_N_links(img, beta)
     # Our addition ends here ###########################################################################################
 
-    num_iters = 1000
+    # num_iters = 1000
+    num_iters = 1
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -161,12 +162,15 @@ def grabcut(img, rect, n_iter=5):
 
         mask = update_mask(mincut_sets, mask)
 
+        print(f"############ Iteration {i} - Energy value: {energy} ############")
         if check_convergence(energy):
             break
 
         OLD_ENERGY = energy
 
     # Return the final mask and the GMMs
+    mask[mask == GC_PR_BGD] = GC_BGD
+    mask[mask == GC_PR_FGD] = GC_FGD
     return mask, bgGMM, fgGMM
 
 
@@ -256,6 +260,9 @@ def update_gmm_of_pixels(pixels, gmm_model):
         covariance_matrix, current_cluster_mean = cv2.calcCovarMatrix(current_cluster_pixels.T, current_cluster_mean,
                                                                       flags=cv2.COVAR_NORMAL | cv2.COVAR_COLS)
         covariance_matrix = covariance_matrix / current_cluster_pixels.shape[0]
+        epsilon = 1e-6
+        covariance_matrix += epsilon * np.eye(covariance_matrix.shape[0])
+
         current_component_weight = current_cluster_pixels.shape[0] / pixels.shape[0]
         current_gmm = GMM(current_cluster_mean, np.linalg.inv(covariance_matrix), np.linalg.det(covariance_matrix),
                           current_component_weight)
@@ -266,10 +273,17 @@ def update_gmm_of_pixels(pixels, gmm_model):
 
 # Define helper functions for the GrabCut algorithm
 def update_GMMs(img, mask, bgGMM, fgGMM):
-    new_bg_gmm_list = update_gmm_of_pixels(img[mask == GC_BGD], bgGMM)
+
+    bg_sure_pixels = img[mask == GC_BGD]
+    bg_probable_pixels = img[mask == GC_PR_BGD]
+    bg_all_pixels = np.concatenate((bg_sure_pixels, bg_probable_pixels))
+    new_bg_gmm_list = update_gmm_of_pixels(bg_all_pixels, bgGMM)
     new_bgGMM = convert_custom_gmm_to_library_gmm(new_bg_gmm_list)
 
-    new_fg_gmm_list = update_gmm_of_pixels(img[mask == GC_PR_FGD], fgGMM)
+    fg_sure_pixels = img[mask == GC_FGD]
+    fg_probable_pixels = img[mask == GC_PR_FGD]
+    fg_all_pixels = np.concatenate((fg_sure_pixels, fg_probable_pixels))
+    new_fg_gmm_list = update_gmm_of_pixels(fg_all_pixels, fgGMM)
     new_fgGMM = convert_custom_gmm_to_library_gmm(new_fg_gmm_list)
 
     return new_bgGMM, new_fgGMM
@@ -330,7 +344,7 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
     print("E", len(graph_weights))
 
     min_cut_result = graph.mincut(bg_source, fg_sink, capacity=graph.es["energy"])
-    print(min_cut_result)
+    # print(min_cut_result)
 
     fg_vertices = min_cut_result.partition[0]
     bg_vertices = min_cut_result.partition[1]
@@ -340,9 +354,9 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
     energy = min_cut_result.value
 
     # Print results
-    print(f"Energy value: {energy}:")
-    print(f"Foreground partition size: {fg_vertices}")
-    print(f"Background partition size: {bg_vertices}")
+    # print(f"Foreground partition size: {fg_vertices}")
+    # print(f"Background partition size: {bg_vertices}")
+
 
     return [fg_vertices, bg_vertices], energy
 
@@ -361,7 +375,8 @@ def update_mask(mincut_sets, mask):
             mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_BGD
 
     for vertex_index in fg_vertices:
-        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_FGD:
+        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_FGD \
+                and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD:
             mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_FGD
 
     return mask
@@ -413,7 +428,7 @@ if __name__ == '__main__':
 
     # Run the GrabCut algorithm on the image and bounding box
     mask, bgGMM, fgGMM = grabcut(img, rect)
-    mask = cv2.threshold(mask, 0, 1, cv2.THRESH_BINARY)[1]
+    new_mask = cv2.threshold(mask, 0, 1, cv2.THRESH_BINARY)[1]
 
     # Print metrics only if requested (valid only for course files)
     if args.eval:
@@ -422,10 +437,17 @@ if __name__ == '__main__':
         acc, jac = cal_metric(mask, gt_mask)
         print(f'Accuracy={acc}, Jaccard={jac}')
 
+    # Print metrics only if requested (valid only for course files)
+    if args.eval:
+        gt_mask = cv2.imread(f'data/seg_GT/{args.input_name}.bmp', cv2.IMREAD_GRAYSCALE)
+        gt_mask = cv2.threshold(gt_mask, 0, 1, cv2.THRESH_BINARY)[1]
+        acc, jac = cal_metric(new_mask, gt_mask)
+        print(f'Accuracy={acc}, Jaccard={jac}')
+
     # Apply the final mask to the input image and display the results
     img_cut = img * (mask[:, :, np.newaxis])
-    #cv2.imshow('Original Image', img)
-    #cv2.imshow('GrabCut Mask', 255 * mask)
-    #cv2.imshow('GrabCut Result', img_cut)
+    cv2.imshow('Original Image', img)
+    cv2.imshow('GrabCut Mask', 255 * mask)
+    cv2.imshow('GrabCut Result', img_cut)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

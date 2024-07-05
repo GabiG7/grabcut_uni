@@ -17,6 +17,7 @@ GC_PR_FGD = 3  # Soft fg pixel
 G_EDGES = []
 G_WEIGHTS = []
 global OLD_ENERGY
+global MAX_VERTEX_N_WEIGHTS
 
 
 def calculate_beta(image):
@@ -91,6 +92,8 @@ def create_N_links(image, beta):
     num_of_rows = img.shape[0]
     num_of_cols = img.shape[1]
 
+    weights_matrix = np.zeros(img.shape[:2], dtype=np.uint32)
+
     # N-Links loop
     for x in range(num_of_rows):
         for y in range(num_of_cols):
@@ -101,7 +104,10 @@ def create_N_links(image, beta):
                 n_x = x + 1
                 n_y = y
                 G_EDGES.append((pixel_coords_to_vid(num_of_cols, x, y), pixel_coords_to_vid(num_of_cols, n_x, n_y)))
-                G_WEIGHTS.append(compute_n_link(image, x, y, n_x, n_y, beta))
+                current_weight = compute_n_link(image, x, y, n_x, n_y, beta)
+                G_WEIGHTS.append(current_weight)
+                weights_matrix[x, y] += current_weight
+                weights_matrix[n_x, n_y] += current_weight
 
             # pixel from right
             # special case - last column
@@ -109,7 +115,10 @@ def create_N_links(image, beta):
                 n_x = x
                 n_y = y + 1
                 G_EDGES.append((pixel_coords_to_vid(num_of_cols, x, y), pixel_coords_to_vid(num_of_cols, n_x, n_y)))
-                G_WEIGHTS.append(compute_n_link(image, x, y, n_x, n_y, beta))
+                current_weight = compute_n_link(image, x, y, n_x, n_y, beta)
+                G_WEIGHTS.append(current_weight)
+                weights_matrix[x, y] += current_weight
+                weights_matrix[n_x, n_y] += current_weight
 
             # pixel from down left diagonal
             # special case - last row or first column
@@ -117,7 +126,10 @@ def create_N_links(image, beta):
                 n_x = x + 1
                 n_y = y - 1
                 G_EDGES.append((pixel_coords_to_vid(num_of_cols, x, y), pixel_coords_to_vid(num_of_cols, n_x, n_y)))
-                G_WEIGHTS.append(compute_n_link(image, x, y, n_x, n_y, beta))
+                current_weight = compute_n_link(image, x, y, n_x, n_y, beta)
+                G_WEIGHTS.append(current_weight)
+                weights_matrix[x, y] += current_weight
+                weights_matrix[n_x, n_y] += current_weight
 
             # pixel from down right diagonal
             # special case - last row or last column
@@ -125,7 +137,12 @@ def create_N_links(image, beta):
                 n_x = x + 1
                 n_y = y + 1
                 G_EDGES.append((pixel_coords_to_vid(num_of_cols, x, y), pixel_coords_to_vid(num_of_cols, n_x, n_y)))
-                G_WEIGHTS.append(compute_n_link(image, x, y, n_x, n_y, beta))
+                current_weight = compute_n_link(image, x, y, n_x, n_y, beta)
+                G_WEIGHTS.append(current_weight)
+                weights_matrix[x, y] += current_weight
+                weights_matrix[n_x, n_y] += current_weight
+
+    return weights_matrix
 
 
 # Define the GrabCut algorithm function
@@ -146,12 +163,15 @@ def grabcut(img, rect, n_iter=5):
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
     # Our addition starts here #########################################################################################
-    beta = calculate_beta(img)
-    create_N_links(img, beta)
+    beta = 0.5
+    # beta = calculate_beta(img)
+    weights_matrix = create_N_links(img, beta)
+    global MAX_VERTEX_N_WEIGHTS
+    MAX_VERTEX_N_WEIGHTS = np.max(weights_matrix)
     # Our addition ends here ###########################################################################################
 
     # num_iters = 1000
-    num_iters = 1
+    num_iters = 12
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -306,7 +326,9 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
     graph_weights = []
     graph_weights.extend(G_WEIGHTS)
 
-    max_n_link = np.max(G_WEIGHTS)
+    # max_n_link = np.max(G_WEIGHTS)
+    max_n_link = MAX_VERTEX_N_WEIGHTS
+    print(f"current max N-link: {max_n_link}")
 
     fg_energy = -fgGMM.score_samples(img.reshape((-1, img.shape[-1]))).reshape(img.shape[:-1])
     bg_energy = -bgGMM.score_samples(img.reshape((-1, img.shape[-1]))).reshape(img.shape[:-1])
@@ -375,8 +397,7 @@ def update_mask(mincut_sets, mask):
             mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_BGD
 
     for vertex_index in fg_vertices:
-        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_FGD \
-                and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD:
+        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD:
             mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_FGD
 
     return mask
@@ -402,7 +423,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='llama', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')
@@ -422,9 +443,11 @@ if __name__ == '__main__':
     if args.use_file_rect:
         rect = tuple(map(int, open(f"data/bboxes/{args.input_name}.txt", "r").read().split(' ')))
     else:
-        rect = tuple(map(int,args.rect.split(',')))
+        rect = tuple(map(int, args.rect.split(',')))
 
     img = cv2.imread(input_path)
+    sol = cv2.imread(f'data/seg_GT/{args.input_name}.bmp', cv2.IMREAD_GRAYSCALE)
+    sol = cv2.threshold(sol, 0, 1, cv2.THRESH_BINARY)[1]
 
     # Run the GrabCut algorithm on the image and bounding box
     mask, bgGMM, fgGMM = grabcut(img, rect)

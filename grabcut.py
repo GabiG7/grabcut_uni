@@ -428,20 +428,14 @@ if __name__ == '__main__':
 
     # Run the GrabCut algorithm on the image and bounding box
     mask, bgGMM, fgGMM = grabcut(img, rect)
-    new_mask = cv2.threshold(mask, 0, 1, cv2.THRESH_BINARY)[1]
+    old_mask = mask
+    mask = cv2.threshold(mask, 0, 1, cv2.THRESH_BINARY)[1]
 
     # Print metrics only if requested (valid only for course files)
     if args.eval:
         gt_mask = cv2.imread(f'data/seg_GT/{args.input_name}.bmp', cv2.IMREAD_GRAYSCALE)
         gt_mask = cv2.threshold(gt_mask, 0, 1, cv2.THRESH_BINARY)[1]
         acc, jac = cal_metric(mask, gt_mask)
-        print(f'Accuracy={acc}, Jaccard={jac}')
-
-    # Print metrics only if requested (valid only for course files)
-    if args.eval:
-        gt_mask = cv2.imread(f'data/seg_GT/{args.input_name}.bmp', cv2.IMREAD_GRAYSCALE)
-        gt_mask = cv2.threshold(gt_mask, 0, 1, cv2.THRESH_BINARY)[1]
-        acc, jac = cal_metric(new_mask, gt_mask)
         print(f'Accuracy={acc}, Jaccard={jac}')
 
     # Apply the final mask to the input image and display the results

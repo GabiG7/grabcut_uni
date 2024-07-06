@@ -61,7 +61,6 @@ def calculate_beta(image):
     return beta
 
 
-
 # Translation from each vertex index to pixel location in img (x,y) for identification
 def vid_to_img_coordinates(single_row_size, vid):
     x = vid // single_row_size
@@ -169,9 +168,11 @@ def grabcut(img, rect, n_iter=5):
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
     # Our addition starts here #########################################################################################
-    # beta = 0.5
-    beta = 8
+    beta = 0.2
+    #beta = 8
     #beta = calculate_beta(img)
+    # if beta < 0.01:
+    #    beta = 8
     print(f"the value of beta is: {beta}")
     weights_matrix = create_N_links(img, beta)
     global MAX_VERTEX_N_WEIGHTS
@@ -198,7 +199,7 @@ def grabcut(img, rect, n_iter=5):
 
         OLD_ENERGY = energy
 
-        #print_image(img, mask)
+        print_image(img, mask)
 
     # Return the final mask and the GMMs
     mask[mask == GC_PR_BGD] = GC_BGD
@@ -305,7 +306,6 @@ def update_gmm_of_pixels(pixels, gmm_model):
 
 # Define helper functions for the GrabCut algorithm
 def update_GMMs(img, mask, bgGMM, fgGMM):
-
     bg_sure_pixels = img[mask == GC_BGD]
     bg_probable_pixels = img[mask == GC_PR_BGD]
     bg_all_pixels = np.concatenate((bg_sure_pixels, bg_probable_pixels))
@@ -349,14 +349,14 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
             pixel_index = i * num_of_cols + j
             if mask[i, j] == GC_BGD:
                 edges.append((pixel_index, fg_sink))
-                capacities.append(bg_energy[i, j])
+                capacities.append(0)
                 edges.append((bg_source, pixel_index))
                 capacities.append(MAX_VERTEX_N_WEIGHTS)
             elif mask[i, j] == GC_FGD:
                 edges.append((pixel_index, fg_sink))
                 capacities.append(MAX_VERTEX_N_WEIGHTS)
                 edges.append((bg_source, pixel_index))
-                capacities.append(fg_energy[i, j])
+                capacities.append(0)
             else:  # For soft assignments, use probabilistic energies
                 edges.append((pixel_index, fg_sink))
                 capacities.append(bg_energy[i, j])
@@ -383,20 +383,21 @@ def update_mask(mincut_sets, mask):
 
     fg_vertices = mincut_sets[0]
     bg_vertices = mincut_sets[1]
+    print(f"num of fg vertices: {len(fg_vertices)}")
+    print(f"num of bg vertices: {len(bg_vertices)}")
 
     fg_sink = mask.shape[0] * mask.shape[1]
     bg_source = mask.shape[0] * mask.shape[1] + 1
 
-    # Precompute the mask indices to avoid recalculating them in the loop
-    bg_indices = [vid_to_img_coordinates(single_row_size, vertex_index) for vertex_index in bg_vertices if vertex_index != bg_source]
-    fg_indices = [vid_to_img_coordinates(single_row_size, vertex_index) for vertex_index in fg_vertices if vertex_index != fg_sink]
+    for vertex_index in bg_vertices:
+        if vertex_index != bg_source and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD \
+                and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_FGD:
+            mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_BGD
 
-    # Use numpy's advanced indexing to set values in one operation
-    bg_indices = tuple(np.array(bg_indices).T)  # Transpose list of indices to tuple for indexing
-    fg_indices = tuple(np.array(fg_indices).T)
-
-    mask[bg_indices] = GC_PR_BGD
-    mask[fg_indices] = GC_PR_FGD
+    for vertex_index in fg_vertices:
+        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD \
+                and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_FGD:
+            mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_FGD
 
     return mask
 
@@ -408,6 +409,7 @@ def check_convergence(current_fg_partition_size, total_pixels):
     if OLD_FG_PARTITION_SIZE is not None:
         # Calculate the absolute difference in foreground partition size between the current and previous iterations
         if np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE) < threshold:
+            print(f"converged at value: {np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE)/total_pixels}")
             return True
 
     # Update the old foreground partition size to the current

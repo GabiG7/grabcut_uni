@@ -208,7 +208,7 @@ def grabcut(img, rect, n_iter=5):
 
 def initialize_gmm_of_mask_value(init_img, init_mask, mask_value, n_components):
     filtered_pixels = init_img[init_mask == mask_value]
-    k_means = KMeans(n_clusters=5)
+    k_means = KMeans(n_clusters=n_components)
     k_means.fit(filtered_pixels)
 
     # Replace each pixel with the centroid of its cluster
@@ -395,12 +395,12 @@ def update_mask(mincut_sets, mask):
 
 def check_convergence(current_fg_partition_size, total_pixels):
     global OLD_FG_PARTITION_SIZE
-    threshold = 0.1 * total_pixels
+    threshold = 0.01 * total_pixels
 
     if OLD_FG_PARTITION_SIZE is not None:
         # Calculate the absolute difference in foreground partition size between the current and previous iterations
         if np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE) < threshold:
-            print(f"converged at value: {np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE) / total_pixels}")
+            # print(f"converged at value: {np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE) / total_pixels}")
             return True
 
     # Update the old foreground partition size to the current
@@ -421,7 +421,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')
@@ -444,9 +444,18 @@ if __name__ == '__main__':
     else:
         rect = tuple(map(int, args.rect.split(',')))
 
+    # rect = tuple(map(int, '1,1,500,500'.split(',')))
+    # rect = tuple(map(int, '100,100,400,400'.split(',')))
+
     img = cv2.imread(input_path)
     sol = cv2.imread(f'data/seg_GT/{args.input_name}.bmp', cv2.IMREAD_GRAYSCALE)
     sol = cv2.threshold(sol, 0, 1, cv2.THRESH_BINARY)[1]
+
+    # Blurring
+    # blur_kernel = (10, 10)  # low blur
+    # blur_kernel = (20, 20)  # high blur
+    # blur_kernel = (50, 50)  # very high blur
+    # img = cv2.blur(img, blur_kernel)
 
     # Run the GrabCut algorithm on the image and bounding box
     mask, bgGMM, fgGMM = grabcut(img, rect)

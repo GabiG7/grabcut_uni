@@ -168,9 +168,9 @@ def grabcut(img, rect, n_iter=5):
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
     # Our addition starts here #########################################################################################
-    beta = 0.2
-    #beta = 8
-    #beta = calculate_beta(img)
+    # beta = 0.5
+    # beta = 8
+    beta = calculate_beta(img)
     # if beta < 0.01:
     #    beta = 8
     print(f"the value of beta is: {beta}")
@@ -184,7 +184,7 @@ def grabcut(img, rect, n_iter=5):
     # Our addition ends here ###########################################################################################
 
     # num_iters = 1000
-    num_iters = 35
+    num_iters = 5
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -430,7 +430,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='llama', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='memorial', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')

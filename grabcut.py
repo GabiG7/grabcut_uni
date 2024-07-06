@@ -6,6 +6,7 @@ from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 from gmm import GMM
 from igraph import Graph
+import time
 
 
 GC_BGD = 0  # Hard bg pixel
@@ -34,38 +35,30 @@ def print_image(img, mask):
 
 
 def calculate_beta(image):
-    beta = 0
-    beta_elements = 0
-    for i in range(image.shape[0]):
-        for j in range(image.shape[1]):
-            # pixel from above
-            if i > 0:
-                diff = image[i, j] - image[i - 1, j]
-                beta += diff.dot(diff)
-                beta_elements += 1
+    # Precompute shifts in all four directions needed for the calculation
+    # To avoid border issues, use np.pad to extend the array
+    padded_image = np.pad(image, ((1, 1), (1, 1), (0, 0)), mode='edge')
 
-            # pixel from left
-            if j > 0:
-                diff = image[i, j] - image[i, j - 1]
-                beta += diff.dot(diff)
-                beta_elements += 1
+    # Central part of the image without the borders
+    center = padded_image[1:-1, 1:-1]
 
-            # pixel from upper left diagonal
-            if i > 0 and j > 0:
-                diff = image[i, j] - image[i - 1, j - 1]
-                beta += diff.dot(diff)
-                beta_elements += 1
+    # Differences from the central part to its four neighbors (up, left, up-left diagonal, up-right diagonal)
+    diff_up = center - padded_image[:-2, 1:-1]  # from above
+    diff_left = center - padded_image[1:-1, :-2]  # from left
+    diff_up_left = center - padded_image[:-2, :-2]  # from upper left diagonal
+    diff_up_right = center - padded_image[:-2, 2:]  # from upper right diagonal
 
-            # pixel from upper right diagonal
-            if i > 0 and j < image.shape[1] - 1:
-                diff = image[i, j] - image[i - 1, j + 1]
-                beta += diff.dot(diff)
-                beta_elements += 1
+    # Calculate the squared differences and sum them
+    sum_of_diffs = (diff_up ** 2 + diff_left ** 2 + diff_up_left ** 2 + diff_up_right ** 2).sum()
 
-    beta /= beta_elements
-    beta *= 2
-    beta = 1 / beta
+    # Count total elements considered (same as beta_elements in the original)
+    total_elements = 4 * np.prod(center.shape[:2])  # 4 times because each pixel contributes 4 times
+
+    # Compute beta as per original formula
+    beta = 1 / (2 * sum_of_diffs / total_elements)
+
     return beta
+
 
 
 # Translation from each vertex index to pixel location in img (x,y) for identification
@@ -82,22 +75,21 @@ def pixel_coords_to_vid(single_row_size, x, y):
 
 # Returns Nlink edge weight (single edge - {n,m})
 def compute_n_link(image, x, y, n_x, n_y, beta):
-    # Parameters for calculations according to the formula
-    single_row_size = image.shape[1]
+    # Assume neighboring pixels, hence distance is 1 for direct neighbors (horizontal/vertical)
+    euclidean_dist = 1  # Default distance for direct neighbors
 
-    # n_x, n_y = vid_to_img_coordinates(single_row_size, x)
-    # m_x, m_y = vid_to_img_coordinates(single_row_size, y)
+    # For diagonal neighbors, the distance would be sqrt(2), which can be handled if necessary:
+    if abs(x - n_x) == 1 and abs(y - n_y) == 1:
+        euclidean_dist = np.sqrt(2)
 
-    # print(f"({x}, {y}), ({n_x}, {n_y})")
-
-    # Pixels euclidean distance
-    euclidean_dist = np.linalg.norm((x - n_x, y - n_y))
-
-    # Pixels squared color distance
+    # Compute squared color distance efficiently
     color_diff = image[x, y] - image[n_x, n_y]
-    color_diff = color_diff.dot(color_diff)
+    color_diff_squared = np.dot(color_diff, color_diff)
 
-    return (50 / euclidean_dist) * np.exp((-beta) * color_diff)
+    # Compute weight based on the color difference and fixed Euclidean distance
+    weight = (50 / euclidean_dist) * np.exp((-beta) * color_diff_squared)
+
+    return weight
 
 
 def create_N_links(image, beta):
@@ -177,8 +169,8 @@ def grabcut(img, rect, n_iter=5):
 
     # Our addition starts here #########################################################################################
     # beta = 0.5
-    beta = 8
-    # beta = calculate_beta(img)
+    # beta = 8
+    beta = calculate_beta(img)
     print(f"the value of beta is: {beta}")
     weights_matrix = create_N_links(img, beta)
     global MAX_VERTEX_N_WEIGHTS
@@ -186,7 +178,7 @@ def grabcut(img, rect, n_iter=5):
     # Our addition ends here ###########################################################################################
 
     # num_iters = 1000
-    num_iters = 20
+    num_iters = 4
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -203,7 +195,7 @@ def grabcut(img, rect, n_iter=5):
 
         OLD_ENERGY = energy
 
-        print_image(img, mask)
+        #print_image(img, mask)
 
     # Return the final mask and the GMMs
     mask[mask == GC_PR_BGD] = GC_BGD
@@ -327,75 +319,60 @@ def update_GMMs(img, mask, bgGMM, fgGMM):
 
 
 def calculate_mincut(img, mask, bgGMM, fgGMM):
-    num_of_rows = img.shape[0]
-    num_of_cols = img.shape[1]
+    num_of_rows, num_of_cols = img.shape[:2]
     num_pixels = num_of_rows * num_of_cols
     fg_sink = num_pixels
     bg_source = num_pixels + 1
 
-    graph = Graph(directed=False)
-    graph.add_vertices(num_pixels + 2)
+    # Initialize the graph with vertices and edge lists prepared for bulk addition
+    graph = Graph(directed=True)
+    graph.add_vertices(num_pixels + 2)  # includes source and sink
 
-    graph_edges = []
-    graph_edges.extend(G_EDGES)
+    # Prepare edges and weights in batch to minimize overhead
+    edges = []
+    capacities = []
 
-    graph_weights = []
-    graph_weights.extend(G_WEIGHTS)
+    # Add N-link edges and weights from pre-stored global variables
+    edges.extend(G_EDGES)
+    capacities.extend(G_WEIGHTS)
 
-    # max_n_link = np.max(G_WEIGHTS)
-    max_n_link = MAX_VERTEX_N_WEIGHTS
-    print(f"current max N-link: {max_n_link}")
-
+    # Calculate energies (reshape operations should be outside of loops for efficiency)
     fg_energy = -fgGMM.score_samples(img.reshape((-1, img.shape[-1]))).reshape(img.shape[:-1])
     bg_energy = -bgGMM.score_samples(img.reshape((-1, img.shape[-1]))).reshape(img.shape[:-1])
 
-    # loop for T-links
-    for i in range(img.shape[0]):
-        for j in range(img.shape[1]):
+    # Loop to establish T-links
+    for i in range(num_of_rows):
+        for j in range(num_of_cols):
+            pixel_index = i * num_of_cols + j
             if mask[i, j] == GC_BGD:
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), bg_source))
-                graph_weights.append(max_n_link)
-
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), fg_sink))
-                graph_weights.append(0)
-
+                edges.append((pixel_index, fg_sink))
+                capacities.append(bg_energy[i, j])
+                edges.append((bg_source, pixel_index))
+                capacities.append(MAX_VERTEX_N_WEIGHTS)
             elif mask[i, j] == GC_FGD:
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), bg_source))
-                graph_weights.append(0)
+                edges.append((pixel_index, fg_sink))
+                capacities.append(MAX_VERTEX_N_WEIGHTS)
+                edges.append((bg_source, pixel_index))
+                capacities.append(fg_energy[i, j])
+            else:  # For soft assignments, use probabilistic energies
+                edges.append((pixel_index, fg_sink))
+                capacities.append(bg_energy[i, j])
+                edges.append((bg_source, pixel_index))
+                capacities.append(fg_energy[i, j])
 
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), fg_sink))
-                graph_weights.append(max_n_link)
+    # Add all edges and capacities at once
+    graph.add_edges(edges)
+    graph.es['capacity'] = capacities
 
-            else:
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), bg_source))
-                graph_weights.append(fg_energy[i, j])
+    # Calculate min-cut
+    min_cut_result = graph.mincut(bg_source, fg_sink, capacity='capacity')
+    fg_vertices, bg_vertices = min_cut_result.partition
 
-                graph_edges.append((pixel_coords_to_vid(num_of_cols, i, j), fg_sink))
-                graph_weights.append(bg_energy[i, j])
-
-    # Add full list of edges to graph
-    graph.add_edges(graph_edges)
-
-    # Add energy weights at the same order of values to match - NOT SURE IF NECESSARY
-    graph.es["energy"] = graph_weights
-    print("W", len(graph_edges))
-    print("E", len(graph_weights))
-
-    min_cut_result = graph.mincut(bg_source, fg_sink, capacity=graph.es["energy"])
-    # print(min_cut_result)
-
-    fg_vertices = min_cut_result.partition[0]
-    bg_vertices = min_cut_result.partition[1]
     if fg_sink not in fg_vertices:
         fg_vertices, bg_vertices = bg_vertices, fg_vertices
 
-    energy = min_cut_result.value
-
-    # Print results
-    # print(f"Foreground partition size: {fg_vertices}")
-    # print(f"Background partition size: {bg_vertices}")
-
-    return [fg_vertices, bg_vertices], energy
+    # Return partitions and the cut value (energy of the cut)
+    return [fg_vertices, bg_vertices], min_cut_result.value
 
 
 def update_mask(mincut_sets, mask):
@@ -403,19 +380,20 @@ def update_mask(mincut_sets, mask):
 
     fg_vertices = mincut_sets[0]
     bg_vertices = mincut_sets[1]
-    print(f"num of fg vertices: {len(fg_vertices)}")
-    print(f"num of bg vertices: {len(bg_vertices)}")
 
     fg_sink = mask.shape[0] * mask.shape[1]
     bg_source = mask.shape[0] * mask.shape[1] + 1
 
-    for vertex_index in bg_vertices:
-        if vertex_index != bg_source and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD:
-            mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_BGD
+    # Precompute the mask indices to avoid recalculating them in the loop
+    bg_indices = [vid_to_img_coordinates(single_row_size, vertex_index) for vertex_index in bg_vertices if vertex_index != bg_source]
+    fg_indices = [vid_to_img_coordinates(single_row_size, vertex_index) for vertex_index in fg_vertices if vertex_index != fg_sink]
 
-    for vertex_index in fg_vertices:
-        if vertex_index != fg_sink and mask[vid_to_img_coordinates(single_row_size, vertex_index)] != GC_BGD:
-            mask[vid_to_img_coordinates(single_row_size, vertex_index)] = GC_PR_FGD
+    # Use numpy's advanced indexing to set values in one operation
+    bg_indices = tuple(np.array(bg_indices).T)  # Transpose list of indices to tuple for indexing
+    fg_indices = tuple(np.array(fg_indices).T)
+
+    mask[bg_indices] = GC_PR_BGD
+    mask[fg_indices] = GC_PR_FGD
 
     return mask
 
@@ -449,6 +427,7 @@ def parse():
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     # Load an example image and define a bounding box around the object of interest
     args = parse()
 
@@ -477,6 +456,7 @@ if __name__ == '__main__':
         gt_mask = cv2.threshold(gt_mask, 0, 1, cv2.THRESH_BINARY)[1]
         acc, jac = cal_metric(mask, gt_mask)
         print(f'Accuracy={acc}, Jaccard={jac}')
+    print("--- %s seconds ---" % (time.time() - start_time))
 
     # Apply the final mask to the input image and display the results
     img_cut = img * (mask[:, :, np.newaxis])

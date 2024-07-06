@@ -7,10 +7,15 @@ import argparse
 
 
 def get_laplacian_operator_of_pixel(img, i, j, color):
-    value = img[i + 1, j, color] + img[i - 1, j, color] + img[i, j + 1, color] + img[i, j - 1, color]\
-           - (4 * img[i, j, color])
-    # if value < 0 or value > 255:
-        # print(f"overflow laplacian value: {value}")
+    value = 4 * img[i, j, color].astype(np.int32)
+    if i > 0:
+        value -= img[i - 1, j, color].astype(np.int32)
+    if i < img.shape[0] - 1:
+        value -= img[i + 1, j, color].astype(np.int32)
+    if j > 0:
+        value -= img[i, j - 1, color].astype(np.int32)
+    if j < img.shape[1] - 1:
+        value -= img[i, j + 1, color].astype(np.int32)
     return value
 
 
@@ -23,25 +28,29 @@ def is_pixel_edge(i, j, img_mask):
         return False
     neighbors = get_pixel_neighbors_indices(i, j)
     for neighbor in neighbors:
+        if neighbor[0] < 0 or neighbor[0] >= img_mask.shape[0]:
+            continue
+        if neighbor[1] < 0 or neighbor[1] >= img_mask.shape[1]:
+            continue
         if img_mask[neighbor] == 0:
             return True
     return False
 
 
-def fill_sparse_poisson_matrix(img_mask, indices, num_of_indices):
-    sparse_matrix = scipy.sparse.lil_matrix((num_of_indices, num_of_indices), dtype=np.uint8)
+def fill_sparse_poisson_matrix(img_mask, index_map, indices_xs, indices_ys, num_of_indices):
+    sparse_matrix = scipy.sparse.lil_matrix((num_of_indices, num_of_indices), dtype=np.float32)
     # print(f"total indices: {num_of_indices}")
     for i in range(num_of_indices):
-        # if i % 1000 == 0:
-            # print(f"current index: {i}")
-        x, y = indices[i]
-        sparse_matrix[i, i] = -4
+        if i % 5000 == 0:
+            print(f"current index: {i}")
+        x, y = indices_xs[i], indices_ys[i]
+        sparse_matrix[i, i] = 4
         index_neighbors = get_pixel_neighbors_indices(x, y)
 
         for n_x, n_y in index_neighbors:
-            if img_mask[n_x, n_y] != 0:
-                neighbors_place_in_sparse = indices.index((n_x, n_y))
-                sparse_matrix[i, neighbors_place_in_sparse] = 1
+            if (0 <= n_x < img_mask.shape[0]) and (0 <= n_y < img_mask.shape[1]) and img_mask[n_x, n_y] != 0:
+                neighbors_place_in_sparse = index_map[n_x, n_y]
+                sparse_matrix[i, neighbors_place_in_sparse] = -1
 
     return sparse_matrix
 
@@ -56,18 +65,19 @@ def poisson_blend(im_src, im_tgt, im_mask, center):
     y_offset = tgt_center_y - src_center_y
 
     masked_non_zero_indices = np.nonzero(im_mask)
-    masked_non_zero_indices = list(zip(masked_non_zero_indices[0], masked_non_zero_indices[1]))
-    num_of_masked_non_zero_indices = len(masked_non_zero_indices)
+    num_of_non_zero_masked = len(masked_non_zero_indices[0])
+    masked_xs, masked_ys = masked_non_zero_indices
+    index_map = -np.ones_like(im_mask, dtype=np.int32)
+    index_map[masked_non_zero_indices] = np.arange(num_of_non_zero_masked)
 
     im_blend = np.copy(im_tgt)
 
-    poisson_sparse_matrix = fill_sparse_poisson_matrix(im_mask, masked_non_zero_indices, num_of_masked_non_zero_indices)
+    poisson_sparse_matrix = fill_sparse_poisson_matrix(im_mask, index_map, masked_xs, masked_ys, num_of_non_zero_masked)
 
     for color in range(im_src.shape[-1]):
-        # poisson_vector = np.zeros(num_of_masked_non_zero_indices, dtype=np.int16)
-        poisson_vector = np.zeros(num_of_masked_non_zero_indices, dtype=np.uint8)
-        for i in range(num_of_masked_non_zero_indices):
-            x, y = masked_non_zero_indices[i]
+        poisson_vector = np.zeros(num_of_non_zero_masked, dtype=np.float32)
+        for i in range(num_of_non_zero_masked):
+            x, y = masked_xs[i], masked_ys[i]
             laplacian_value = get_laplacian_operator_of_pixel(im_src, x, y, color)
             poisson_vector[i] = laplacian_value
 
@@ -75,17 +85,17 @@ def poisson_blend(im_src, im_tgt, im_mask, center):
                 index_neighbors = get_pixel_neighbors_indices(x, y)
 
                 for neighbor in index_neighbors:
-                    if neighbor in masked_non_zero_indices:
-                        poisson_vector[i] -= im_tgt[neighbor[0] + x_offset, neighbor[1] + y_offset, color]
+                    if neighbor[0] < 0 or neighbor[0] >= im_tgt.shape[0]:
+                        continue
+                    if neighbor[1] < 0 or neighbor[1] >= im_tgt.shape[1]:
+                        continue
+                    if im_mask[neighbor[0], neighbor[1]] == 0:
+                        poisson_vector[i] += im_tgt[neighbor[0] + x_offset, neighbor[1] + y_offset, color]
 
-        # shit because of RGB colors
-        x_sol = spsolve(poisson_sparse_matrix, poisson_vector)
-        x_sol[x_sol > 1] = 1
-        x_sol[x_sol < 0] = 0
-        x_sol = x_sol * 255
-
-        for i in range(num_of_masked_non_zero_indices):
-            x, y = masked_non_zero_indices[i]
+        x_sol = spsolve(poisson_sparse_matrix.tocsr(), poisson_vector)
+        x_sol = np.clip(x_sol, 0, 255)
+        for i in range(num_of_non_zero_masked):
+            x, y = masked_xs[i], masked_ys[i]
             im_blend[x + x_offset, y + y_offset, color] = x_sol[i]
 
     return im_blend
@@ -95,7 +105,7 @@ def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--src_path', type=str, default='./data/imgs/banana1.jpg', help='image file path')
     parser.add_argument('--mask_path', type=str, default='./data/seg_GT/banana1.bmp', help='mask file path')
-    parser.add_argument('--tgt_path', type=str, default='./data/bg/table.jpg', help='mask file path')
+    parser.add_argument('--tgt_path', type=str, default='./data/bg/wall.jpg', help='target file path')
     return parser.parse_args()
 
 

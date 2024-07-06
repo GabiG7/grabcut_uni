@@ -166,20 +166,17 @@ def grabcut(img, rect, n_iter=5):
 
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
-    # Our addition starts here #########################################################################################
-    # beta = 0.5
-    # beta = 8
+    # Our addition starts here
     beta = calculate_beta(img)
     # if beta < 0.01:
     #    beta = 8
-    print(f"the value of beta is: {beta}")
+    # print(f"the value of beta is: {beta}")
     weights_matrix = create_N_links(img, beta)
     global MAX_VERTEX_N_WEIGHTS
     MAX_VERTEX_N_WEIGHTS = np.max(weights_matrix)
-    # Our addition ends here ###########################################################################################
+    # Our addition ends here
 
-    # num_iters = 1000
-    num_iters = 5
+    num_iters = 1000
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -190,13 +187,13 @@ def grabcut(img, rect, n_iter=5):
 
         mask = update_mask(mincut_sets, mask)
 
-        print(f"############ Iteration {i} - Energy value: {energy} ############")
+        # print(f"############ Iteration {i} - Energy value: {energy} ############")
         if check_convergence(energy):
             break
 
         OLD_ENERGY = energy
 
-        print_image(img, mask)
+        # print_image(img, mask)
 
     # Return the final mask and the GMMs
     mask[mask == GC_PR_BGD] = GC_BGD
@@ -206,7 +203,6 @@ def grabcut(img, rect, n_iter=5):
 
 def initialize_gmm_of_mask_value(init_img, init_mask, mask_value, n_components):
     filtered_pixels = init_img[init_mask == mask_value]
-    # normalized_pixels = filtered_pixels / 255.0
     k_means = KMeans(n_clusters=5)
     k_means.fit(filtered_pixels)
 
@@ -216,10 +212,6 @@ def initialize_gmm_of_mask_value(init_img, init_mask, mask_value, n_components):
     # put the labels in the original image
     clustered_image = np.zeros_like(init_img)
     clustered_image[init_mask == mask_value] = clustered_pixels.astype(np.uint8)
-
-    # cv2.imshow('Clustered Image', clustered_image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
 
     gmm_list = []
 
@@ -234,9 +226,6 @@ def initialize_gmm_of_mask_value(init_img, init_mask, mask_value, n_components):
         current_gmm = GMM(current_cluster_mean, np.linalg.inv(covariance_matrix), np.linalg.det(covariance_matrix),
                           current_component_weight)
         gmm_list.append(current_gmm)
-
-        # gmm = GaussianMixture(n_components=1, covariance_type='full', random_state=42)
-        # gmm.fit(current_cluster_pixels)
 
     return gmm_list
 
@@ -270,35 +259,33 @@ def initialize_GMMs(img, mask, n_components=5):
     return bgGMM, fgGMM
 
 
-# Define helper functions for the GrabCut algorithm
 def update_gmm_of_pixels(pixels, gmm_model):
     # implement running the likelihood of a each gmm on each pixel
     # save the index of the one with the maximum likelihood
+    n_components = gmm_model.n_components
+    n_features = pixels.shape[1]
 
-    pixel_likelihoods = gmm_model._estimate_weighted_log_prob(pixels)
-    pixels_max_log_likelihood_indices = np.argmax(pixel_likelihoods, axis=1)
+    # Initialize means, covariances, and weights
+    updated_means = np.zeros((n_components, n_features))
+    updated_covariances = np.zeros((n_components, n_features, n_features))
+    updated_weights = np.zeros(n_components)
 
-    labels, counts = np.unique(pixels_max_log_likelihood_indices, return_counts=True)
-
-    # somehow update the gmm based on the result
-    updated_gmm_list = []
-    for i in range(gmm_model.n_components):
-        current_cluster_pixels = pixels[pixels_max_log_likelihood_indices == i]
+    predictions = gmm_model.predict(pixels)
+    for gaussian_index in range(n_components):
+        current_cluster_pixels = pixels[predictions == gaussian_index]
         if len(current_cluster_pixels) == 0:
             continue
-        current_cluster_mean = np.empty((current_cluster_pixels.shape[1],))
-        covariance_matrix, current_cluster_mean = cv2.calcCovarMatrix(current_cluster_pixels.T, current_cluster_mean,
-                                                                      flags=cv2.COVAR_NORMAL | cv2.COVAR_COLS)
-        covariance_matrix = covariance_matrix / current_cluster_pixels.shape[0]
+        updated_means[gaussian_index] = np.mean(current_cluster_pixels, axis=0)
+        updated_covariances[gaussian_index] = np.cov(current_cluster_pixels, rowvar=False)
         epsilon = 1e-6
-        covariance_matrix += epsilon * np.eye(covariance_matrix.shape[0])
+        updated_covariances[gaussian_index] += epsilon * np.eye(updated_covariances[gaussian_index].shape[0])
+        updated_weights[gaussian_index] = current_cluster_pixels.shape[0] / pixels.shape[0]
 
-        current_component_weight = current_cluster_pixels.shape[0] / pixels.shape[0]
-        current_gmm = GMM(current_cluster_mean, np.linalg.inv(covariance_matrix), np.linalg.det(covariance_matrix),
-                          current_component_weight)
-        updated_gmm_list.append(current_gmm)
+    gmm_model.means_ = updated_means
+    gmm_model.covariances_ = updated_covariances
+    gmm_model.weights_ = updated_weights
 
-    return updated_gmm_list
+    return gmm_model
 
 
 # Define helper functions for the GrabCut algorithm
@@ -306,14 +293,16 @@ def update_GMMs(img, mask, bgGMM, fgGMM):
     bg_sure_pixels = img[mask == GC_BGD]
     bg_probable_pixels = img[mask == GC_PR_BGD]
     bg_all_pixels = np.concatenate((bg_sure_pixels, bg_probable_pixels))
-    new_bg_gmm_list = update_gmm_of_pixels(bg_all_pixels, bgGMM)
-    new_bgGMM = convert_custom_gmm_to_library_gmm(new_bg_gmm_list)
+    # new_bg_gmm_list = update_gmm_of_pixels(bg_all_pixels, bgGMM)
+    # new_bgGMM = convert_custom_gmm_to_library_gmm(new_bg_gmm_list)
+    new_bgGMM = update_gmm_of_pixels(bg_all_pixels, bgGMM)
 
     fg_sure_pixels = img[mask == GC_FGD]
     fg_probable_pixels = img[mask == GC_PR_FGD]
     fg_all_pixels = np.concatenate((fg_sure_pixels, fg_probable_pixels))
-    new_fg_gmm_list = update_gmm_of_pixels(fg_all_pixels, fgGMM)
-    new_fgGMM = convert_custom_gmm_to_library_gmm(new_fg_gmm_list)
+    # new_fg_gmm_list = update_gmm_of_pixels(fg_all_pixels, fgGMM)
+    # new_fgGMM = convert_custom_gmm_to_library_gmm(new_fg_gmm_list)
+    new_fgGMM = update_gmm_of_pixels(fg_all_pixels, fgGMM)
 
     return new_bgGMM, new_fgGMM
 
@@ -380,8 +369,8 @@ def update_mask(mincut_sets, mask):
 
     fg_vertices = mincut_sets[0]
     bg_vertices = mincut_sets[1]
-    print(f"num of fg vertices: {len(fg_vertices)}")
-    print(f"num of bg vertices: {len(bg_vertices)}")
+    # print(f"num of fg vertices: {len(fg_vertices)}")
+    # print(f"num of bg vertices: {len(bg_vertices)}")
 
     fg_sink = mask.shape[0] * mask.shape[1]
     bg_source = mask.shape[0] * mask.shape[1] + 1
@@ -419,7 +408,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='memorial', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')

@@ -19,6 +19,7 @@ G_EDGES = []
 G_WEIGHTS = []
 global OLD_ENERGY
 global MAX_VERTEX_N_WEIGHTS
+global OLD_FG_PARTITION_SIZE
 
 
 def print_image(img, mask):
@@ -169,28 +170,30 @@ def grabcut(img, rect, n_iter=5):
 
     # Our addition starts here #########################################################################################
     # beta = 0.5
-    # beta = 8
-    beta = calculate_beta(img)
+    beta = 8
+    #beta = calculate_beta(img)
     print(f"the value of beta is: {beta}")
     weights_matrix = create_N_links(img, beta)
     global MAX_VERTEX_N_WEIGHTS
     MAX_VERTEX_N_WEIGHTS = np.max(weights_matrix)
+
+    # Initial value for foreground partition size (1 pixel)
+    global OLD_FG_PARTITION_SIZE
+    OLD_FG_PARTITION_SIZE = 1
     # Our addition ends here ###########################################################################################
 
     # num_iters = 1000
-    num_iters = 4
+    num_iters = 35
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
         # Update GMM
         bgGMM, fgGMM = update_GMMs(img, mask, bgGMM, fgGMM)
-
         mincut_sets, energy = calculate_mincut(img, mask, bgGMM, fgGMM)
-
         mask = update_mask(mincut_sets, mask)
 
         print(f"############ Iteration {i} - Energy value: {energy} ############")
-        if check_convergence(energy):
+        if check_convergence(len(mincut_sets[0]), img.shape[0]*img.shape[1]):
             break
 
         OLD_ENERGY = energy
@@ -398,10 +401,17 @@ def update_mask(mincut_sets, mask):
     return mask
 
 
-def check_convergence(energy):
-    global OLD_ENERGY
-    if OLD_ENERGY != -1 and np.abs(energy - OLD_ENERGY) < 1e-3:
-        return True
+def check_convergence(current_fg_partition_size, total_pixels):
+    global OLD_FG_PARTITION_SIZE
+    threshold = 0.1 * total_pixels
+
+    if OLD_FG_PARTITION_SIZE is not None:
+        # Calculate the absolute difference in foreground partition size between the current and previous iterations
+        if np.abs(current_fg_partition_size - OLD_FG_PARTITION_SIZE) < threshold:
+            return True
+
+    # Update the old foreground partition size to the current
+    OLD_FG_PARTITION_SIZE = current_fg_partition_size
     return False
 
 
@@ -418,7 +428,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='llama', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')

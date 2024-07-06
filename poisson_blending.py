@@ -41,8 +41,8 @@ def fill_sparse_poisson_matrix(img_mask, index_map, indices_xs, indices_ys, num_
     sparse_matrix = scipy.sparse.lil_matrix((num_of_indices, num_of_indices), dtype=np.float32)
     # print(f"total indices: {num_of_indices}")
     for i in range(num_of_indices):
-        if i % 5000 == 0:
-            print(f"current index: {i}")
+        # if i % 5000 == 0:
+        #    print(f"current index: {i}")
         x, y = indices_xs[i], indices_ys[i]
         sparse_matrix[i, i] = 4
         index_neighbors = get_pixel_neighbors_indices(x, y)
@@ -85,9 +85,9 @@ def poisson_blend(im_src, im_tgt, im_mask, center):
                 index_neighbors = get_pixel_neighbors_indices(x, y)
 
                 for neighbor in index_neighbors:
-                    if neighbor[0] < 0 or neighbor[0] >= im_tgt.shape[0]:
+                    if neighbor[0] < 0 or neighbor[0] >= im_src.shape[0]:
                         continue
-                    if neighbor[1] < 0 or neighbor[1] >= im_tgt.shape[1]:
+                    if neighbor[1] < 0 or neighbor[1] >= im_src.shape[1]:
                         continue
                     if im_mask[neighbor[0], neighbor[1]] == 0:
                         poisson_vector[i] += im_tgt[neighbor[0] + x_offset, neighbor[1] + y_offset, color]
@@ -105,7 +105,7 @@ def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--src_path', type=str, default='./data/imgs/banana1.jpg', help='image file path')
     parser.add_argument('--mask_path', type=str, default='./data/seg_GT/banana1.bmp', help='mask file path')
-    parser.add_argument('--tgt_path', type=str, default='./data/bg/wall.jpg', help='target file path')
+    parser.add_argument('--tgt_path', type=str, default='./data/bg/table.jpg', help='target file path')
     return parser.parse_args()
 
 

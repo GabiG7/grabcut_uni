@@ -20,6 +20,19 @@ global OLD_ENERGY
 global MAX_VERTEX_N_WEIGHTS
 
 
+def print_image(img, mask):
+    new_mask = np.copy(mask)
+    new_mask[new_mask == GC_PR_BGD] = GC_BGD
+    new_mask[new_mask == GC_PR_FGD] = GC_FGD
+    new_mask = cv2.threshold(new_mask, 0, 1, cv2.THRESH_BINARY)[1]
+    # Apply the final mask to the input image and display the results
+    img_cut = img * (new_mask[:, :, np.newaxis])
+    cv2.imshow('GrabCut Mask', 255 * new_mask)
+    cv2.imshow('GrabCut Result', img_cut)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
 def calculate_beta(image):
     beta = 0
     beta_elements = 0
@@ -92,7 +105,7 @@ def create_N_links(image, beta):
     num_of_rows = image.shape[0]
     num_of_cols = image.shape[1]
 
-    weights_matrix = np.zeros(image.shape[:2], dtype=np.uint32)
+    weights_matrix = np.zeros(image.shape[:2], dtype=np.float32)
 
     # N-Links loop
     for x in range(num_of_rows):
@@ -163,15 +176,17 @@ def grabcut(img, rect, n_iter=5):
     bgGMM, fgGMM = initialize_GMMs(img, mask)
 
     # Our addition starts here #########################################################################################
-    beta = 0.5
+    # beta = 0.5
+    beta = 8
     # beta = calculate_beta(img)
+    print(f"the value of beta is: {beta}")
     weights_matrix = create_N_links(img, beta)
     global MAX_VERTEX_N_WEIGHTS
     MAX_VERTEX_N_WEIGHTS = np.max(weights_matrix)
     # Our addition ends here ###########################################################################################
 
     # num_iters = 1000
-    num_iters = 12
+    num_iters = 20
     global OLD_ENERGY
     OLD_ENERGY = -1
     for i in range(num_iters):
@@ -187,6 +202,8 @@ def grabcut(img, rect, n_iter=5):
             break
 
         OLD_ENERGY = energy
+
+        print_image(img, mask)
 
     # Return the final mask and the GMMs
     mask[mask == GC_PR_BGD] = GC_BGD
@@ -378,7 +395,6 @@ def calculate_mincut(img, mask, bgGMM, fgGMM):
     # print(f"Foreground partition size: {fg_vertices}")
     # print(f"Background partition size: {bg_vertices}")
 
-
     return [fg_vertices, bg_vertices], energy
 
 
@@ -387,6 +403,8 @@ def update_mask(mincut_sets, mask):
 
     fg_vertices = mincut_sets[0]
     bg_vertices = mincut_sets[1]
+    print(f"num of fg vertices: {len(fg_vertices)}")
+    print(f"num of bg vertices: {len(bg_vertices)}")
 
     fg_sink = mask.shape[0] * mask.shape[1]
     bg_source = mask.shape[0] * mask.shape[1] + 1
@@ -422,7 +440,7 @@ def cal_metric(predicted_mask, gt_mask):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_name', type=str, default='llama', help='name of image from the course files')
+    parser.add_argument('--input_name', type=str, default='banana1', help='name of image from the course files')
     parser.add_argument('--eval', type=int, default=1, help='calculate the metrics')
     parser.add_argument('--input_img_path', type=str, default='', help='if you wish to use your own img_path')
     parser.add_argument('--use_file_rect', type=int, default=1, help='Read rect from course files')
